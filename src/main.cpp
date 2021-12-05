@@ -1,11 +1,11 @@
 #define USE_SERIAL      OFF
 #define USE_DISPLAY     ON
 #define USE_WIFI        ON
-#define USE_PEAP        OFF
+#define USE_PEAP        ON
 #define USE_OTA         ON
 #define USE_MQTT        ON
 #define USE_SSL         ON
-#define USE_ALARM       ON
+#define USE_ALARM       OFF
 
 #include <main.h>
 #include <passwords.h>
@@ -21,19 +21,25 @@ Adafruit_SCD30  scd30;
         #endif
     #endif
 #endif
-#if USE_WIFI && USE_MQTT
-    unsigned long msPublish = 0;
-    #if USE_SSL
-        WiFiClientSecure client;
-    #else
-        WiFiClient client;
+#if USE_WIFI
+    short wifiSelection = SELECTION_START;
+    unsigned long msConnect = 0;
+    const char *wifis[] = WIFI_SSIDS;
+    const char *wifisPasswords[] = WIFI_PASSWORDS;
+    #if USE_MQTT
+        unsigned long msPublish = 0;
+        #if USE_SSL
+            WiFiClientSecure client;
+        #else
+            WiFiClient client;
+        #endif
+        Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_USERNAME, AIO_KEY);
+        Adafruit_MQTT_Publish co2(&mqtt, FEED_CO2);
+        Adafruit_MQTT_Publish temperature(&mqtt, FEED_TEMPERATURE);
+        Adafruit_MQTT_Publish humidity(&mqtt, FEED_HUMIDITY);
     #endif
-    Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_USERNAME, AIO_KEY);
-    Adafruit_MQTT_Publish co2(&mqtt, FEED_CO2);
-    Adafruit_MQTT_Publish temp(&mqtt, FEED_TEMPERATURE);
-    Adafruit_MQTT_Publish hum(&mqtt, FEED_HUMIDITY);
 #endif
-bool first = true;
+char first = -1;
 
 
 void setup(void)
@@ -64,33 +70,12 @@ void setup(void)
 
         _show();
         _clear();
+        delay(2000);
     #endif
 
     #if USE_WIFI
         WiFi.mode(WIFI_STA);
-        #if USE_PEAP
-            struct station_config wifi_config{};
-            strcpy((char*)wifi_config.ssid,WIFI_SSID);
-            strcpy((char*)wifi_config.password,WIFI_USER_PASSWORD);
-            wifi_station_set_config(&wifi_config);
-
-            wifi_station_set_wpa2_enterprise_auth(true);
-
-            wifi_station_clear_cert_key();
-            wifi_station_clear_enterprise_ca_cert();
-            wifi_station_clear_enterprise_identity();
-            wifi_station_clear_enterprise_username();
-            wifi_station_clear_enterprise_password();
-            wifi_station_clear_enterprise_new_password();
-
-            wifi_station_set_enterprise_identity((uint8*)WIFI_IDENTITY, strlen(WIFI_IDENTITY));
-            wifi_station_set_enterprise_username((uint8*)WIFI_USER_NAME, strlen(WIFI_USER_NAME));
-            wifi_station_set_enterprise_password((uint8*)WIFI_USER_PASSWORD, strlen((char*)WIFI_USER_PASSWORD));
-
-            wifi_station_connect();
-        #else
-            WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-        #endif
+        /*
         uint8 attempts;
         for(attempts = 0; attempts < CONNECTION_RETRY_COUNT; attempts++)
         {
@@ -111,11 +96,12 @@ void setup(void)
         if(!WiFi.isConnected())
         {
             #if USE_SERIAL || USE_DISPLAY
-                _print("Connection failed.\nRebooting...");
+                _print("Connection failed.");
                 _show();
             #endif
-            _restart();
+            //_restart();
         }
+        */
 
         #if USE_OTA
             #if USE_SERIAL || USE_DISPLAY
@@ -184,6 +170,7 @@ void setup(void)
         #endif
     #endif
 
+    ledBuiltin(LED_OFF);
     ledBuiltinSetup();
     #if USE_ALARM
         buzzer(BUZZER_OFF);
@@ -201,150 +188,185 @@ void setup(void)
 
 void loop()
 {
-    #if USE_WIFI && USE_OTA
-        ArduinoOTA.handle();
-    #endif
-    if(scd30.dataReady())
-    {
-        if(!scd30.read())
-        {
-            #if USE_SERIAL || USE_DISPLAY
-                _println("Error reading sensor data.");
-            #endif
-            return;
-        }
-        ledBuiltin(LED_ON);
-
+    #if USE_WIFI
         #if USE_SERIAL || USE_DISPLAY
             _clear();
+            _print(WiFi.SSID());
         #endif
-
-        #if USE_WIFI && USE_MQTT
-            if(!mqtt.connected())
-            {
+        if(WiFi.isConnected())
+        {
+            #if USE_OTA
+                ArduinoOTA.handle();
+            #endif
+            #if USE_MQTT
                 #if USE_SERIAL || USE_DISPLAY
-                    _println("MQTT not connected,\nreconnecting...\n");
-                    _show();
-                    int8_t result = mqtt.connect();
-                    if(result)
+                    _print(" MQTT");
+                #endif
+                if(mqtt.connected())
+                {
+                    if(millis() - msPublish > REFRESH_FEED)
                     {
-                        _printf("Not connected:\n%s",(char*)mqtt.connectErrorString(result));
+                        if(first == 1)
+                        {
+                            ledBuiltin(LED_ON);
+                            temperature.publish(scd30.temperature, 1);
+                            humidity.publish(scd30.relative_humidity, 1);
+                            co2.publish(scd30.CO2,0);
+                            ledBuiltin(LED_OFF);
+                        }
+                        msPublish = millis();
+                    }
+                    #if USE_DISPLAY
+                        oled.drawFastHLine(0,SCREEN_HEIGHT - 1,(millis() - msPublish) * SCREEN_WIDTH / REFRESH_FEED,SSD1306_WHITE);
+                    #endif
+                }
+                else
+                {
+                    #if USE_SERIAL || USE_DISPLAY
+                        _print('!');
+                    #endif
+                    mqtt.connect();
+                }
+            #endif
+            #if USE_SERIAL || USE_DISPLAY
+                _rtlprintf("%i.%i",WiFi.localIP()[2],WiFi.localIP()[3]);
+            #endif
+        }
+        else
+        {
+            if(millis() - msConnect > CONNECTION_RETRY_INTERVAL)
+            {
+                #if USE_PEAP
+                    if(wifiSelection == SELECTION_START)
+                    {
+                        struct station_config wifi_config{};
+                        strcpy((char*)wifi_config.ssid,WIFI_SSID);
+                        strcpy((char*)wifi_config.password,WIFI_USER_PASSWORD);
+                        wifi_station_set_config(&wifi_config);
+
+                        wifi_station_set_wpa2_enterprise_auth(true);
+
+                        wifi_station_clear_cert_key();
+                        wifi_station_clear_enterprise_ca_cert();
+                        wifi_station_clear_enterprise_identity();
+                        wifi_station_clear_enterprise_username();
+                        wifi_station_clear_enterprise_password();
+                        wifi_station_clear_enterprise_new_password();
+
+                        wifi_station_set_enterprise_identity((uint8*)WIFI_IDENTITY, strlen(WIFI_IDENTITY));
+                        wifi_station_set_enterprise_username((uint8*)WIFI_USER_NAME, strlen(WIFI_USER_NAME));
+                        wifi_station_set_enterprise_password((uint8*)WIFI_USER_PASSWORD, strlen((char*)WIFI_USER_PASSWORD));
+
+                        wifi_station_connect();
+
                     }
                     else
-                        _print("Connected!");
-                    _show();
-                    _clear();
-                    delay(500);
+                    {
+                        wifi_station_set_wpa2_enterprise_auth(false);
+                        WiFi.begin(wifis[wifiSelection],wifisPasswords[wifiSelection]);
+                    }
                 #else
-                    mqtt.connect();
+                    WiFi.begin(wifis[wifiSelection],wifisPasswords[wifiSelection]);
                 #endif
-
+                msConnect = millis();
+                wifiSelection++;
+                if(wifiSelection == WIFI_COUNT)
+                    wifiSelection = SELECTION_START;
+                #if USE_SERIAL || USE_DISPLAY
+                    _print('?');
+                #endif
             }
-        #endif
+            #if USE_SERIAL || USE_DISPLAY
+                else
+                {
+                    _print('!');
+                }
+            #endif
+        }
+    #endif
 
+    #if USE_SERIAL || USE_DISPLAY || USE_ALARM || (USE_WIFI && USE_MQTT)
+        if(scd30.dataReady())
+        {
+            if (scd30.read())
+            {
+                if(first != 1)
+                    first++;
+            }
+            else
+            {
+                scd30.reset();
+            }
+        }
+    #endif
 
+    #if USE_SERIAL || USE_DISPLAY || USE_ALARM
         #if USE_SERIAL || USE_DISPLAY
-            _print(SENSOR_NAME);
-            #if USE_WIFI
-                _rtlprintf("%i.%i",WiFi.localIP()[2],WiFi.localIP()[3]);
+            #if !USE_WIFI
+                _print(SENSOR_NAME);
             #endif
             _print("\n\n");
             _setCursor(_cursorX(), _cursorY() + 1);
         #endif
-        #if USE_WIFI && USE_MQTT
-            msPublish = millis() - msPublish > REFRESH_FEED ? 0 : msPublish;
-        #endif
-        #if USE_SERIAL || USE_DISPLAY || (USE_WIFI && USE_MQTT)
-            if(scd30.temperature != 0)
-            {
-                #if USE_SERIAL || USE_DISPLAY
-                    _printf("Temperature: %.1f%c C\n",scd30.temperature,CHAR_DEGREE);
-                    _setCursor(_cursorX(), _cursorY() + 3);
-                #endif
-                #if USE_WIFI && USE_MQTT
-                    if(msPublish == 0)
-                        temp.publish(scd30.temperature,1);
-                #endif
-            }
-            if(scd30.relative_humidity != 0)
-            {
-                #if USE_SERIAL || USE_DISPLAY
-                    _printf("Humidity: %.1f %%\n\n",scd30.relative_humidity);
-                #endif
-                #if USE_WIFI && USE_MQTT
-                    if(msPublish == 0)
-                        hum.publish(scd30.relative_humidity,1);
-                #endif
-            }
-        #endif
-        if(first)
-        {
-            first = false;
-        }
-        else if(scd30.CO2 != 0)
+        if(first == 1)
         {
             #if USE_SERIAL || USE_DISPLAY
-                _textSize(2);
-                _print("CO");
-                x = _cursorX();
-                y = _cursorY();
-                _textSize(1);
-                _print("\n");
-                _setCursorX(x);
-                _print("2 ");
-                _textSize(2);
-                _setCursor(_cursorX(), y);
-                _printf("%.0f",scd30.CO2);
-                x = _cursorX();
-                _textSize(1);
+                if(scd30.temperature != 0)
+                {
+                    _printf("Temperature: %.1f%c C\n",scd30.temperature,CHAR_DEGREE);
+                    _setCursor(_cursorX(), _cursorY() + 3);
+                }
+                if(scd30.relative_humidity != 0)
+                {
+                    _printf("Humidity: %.1f %%\n\n",scd30.relative_humidity);
+                }
             #endif
-
-            #if USE_WIFI && USE_MQTT
-                if(msPublish == 0)
-                    co2.publish(scd30.CO2,0);
-            #endif
-            #if USE_SERIAL || USE_DISPLAY || USE_ALARM
+            if(scd30.CO2 != 0)
+            {
                 if(msAlarm == 0)
                     msAlarm = scd30.CO2 > SENSOR_CO2_LEVEL_DANGER ? millis() : 0;
-                if(msAlarm != 0)
-                {
-                    #if USE_SERIAL || USE_DISPLAY
-                        _println(" ALARM!");
-                    #endif
-                }
                 #if USE_SERIAL || USE_DISPLAY
+                    _textSize(2);
+                    _print("CO");
+                    x = _cursorX();
+                    y = _cursorY();
+                    _textSize(1);
+                    _print("\n");
+                    _setCursorX(x);
+                    _print("2 ");
+                    _textSize(2);
+                    _setCursor(_cursorX(), y);
+                    _printf("%.0f",scd30.CO2);
+                    x = _cursorX();
+                    _textSize(1);
+                    if(msAlarm != 0)
+                    {
+                        _println(" ALARM!");
+                    }
                     else
                         _print("\n");
                     _setCursorX(x);
                     _print(" ppm");
                 #endif
-            #endif
+            }
         }
-        #if USE_WIFI && USE_MQTT
-            if(msPublish == 0)
-                msPublish = millis();
-        #endif
-        ledBuiltin(LED_OFF);
-    }
-
-    #if USE_ALARM
         if(msAlarm != 0)
         {
             if(millis() > msAlarm + SENSOR_ALARM_DURATION)
             {
-                buzzer(BUZZER_OFF);
+                #if USE_ALARM
+                    buzzer(BUZZER_OFF);
+                #endif
                 msAlarm = 0;
             }
-            else
-                buzzer(BUZZER_ON);
+            #if USE_ALARM
+                else
+                    buzzer(BUZZER_ON);
+            #endif
         }
     #endif
 
     #if USE_SERIAL || USE_DISPLAY
-        #if USE_DISPLAY && USE_WIFI && USE_MQTT
-            if(mqtt.connected())
-                oled.drawFastHLine(0,SCREEN_HEIGHT - 1,(millis() - msPublish) * SCREEN_WIDTH / REFRESH_FEED,SSD1306_WHITE);
-        #endif
         _show();
     #endif
 }

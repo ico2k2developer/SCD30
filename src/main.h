@@ -120,7 +120,7 @@
 #define TEXT_PEAP           "PEAP"
 #define TEXT_ON             "ON"
 #define TEXT_OFF            "OFF"
-#define VERSION             "1.4"
+#define VERSION             "1.5"
 #define VERSION_NAME        "v" VERSION
 
 #define BUZZER              LED_BUILTIN_AUX
