@@ -8,8 +8,6 @@
 #define USE_ALARM       OFF
 
 #include <main.h>
-#include <passwords.h>
-#include <feeds.h>
 
 Adafruit_SCD30  scd30;
 #if USE_SERIAL || USE_DISPLAY || USE_ALARM
@@ -22,10 +20,15 @@ Adafruit_SCD30  scd30;
     #endif
 #endif
 #if USE_WIFI
-    short wifiSelection = SELECTION_START;
+    bool scanning = false;
+    bool scanFinished = false;
+    int found1[WIFI_COUNT];
+    short wifi,f1;
     unsigned long msConnect = 0;
-    const char *wifis[] = WIFI_SSIDS;
-    const char *wifisPasswords[] = WIFI_PASSWORDS;
+    #if USE_PEAP
+        int found2[PEAP_COUNT];
+        short peap,f2;
+    #endif
     #if USE_MQTT
         unsigned long msPublish = 0;
         #if USE_SSL
@@ -39,7 +42,7 @@ Adafruit_SCD30  scd30;
         Adafruit_MQTT_Publish humidity(&mqtt, FEED_HUMIDITY);
     #endif
 #endif
-char first = -1;
+char first = -2;
 
 
 void setup(void)
@@ -48,7 +51,6 @@ void setup(void)
 
     #if USE_SERIAL
         Serial.begin(115200);
-        _restart();
     #endif
 
     #if USE_DISPLAY
@@ -188,13 +190,15 @@ void setup(void)
 
 void loop()
 {
+    #if USE_SERIAL || USE_DISPLAY
+        _clear();
+    #endif
     #if USE_WIFI
-        #if USE_SERIAL || USE_DISPLAY
-            _clear();
-            _print(WiFi.SSID());
-        #endif
         if(WiFi.isConnected())
         {
+            #if USE_SERIAL || USE_DISPLAY
+                _print(WiFi.SSID());
+            #endif
             #if USE_OTA
                 ArduinoOTA.handle();
             #endif
@@ -223,9 +227,11 @@ void loop()
                 else
                 {
                     #if USE_SERIAL || USE_DISPLAY
-                        _print('!');
+                        _println('!');
+                        _print(mqtt.connectErrorString(mqtt.connect()));
+                    #else
+                        mqtt.connect();
                     #endif
-                    mqtt.connect();
                 }
             #endif
             #if USE_SERIAL || USE_DISPLAY
@@ -234,54 +240,87 @@ void loop()
         }
         else
         {
-            if(millis() - msConnect > CONNECTION_RETRY_INTERVAL)
+            if(scanning)
             {
-                #if USE_PEAP
-                    if(wifiSelection == SELECTION_START)
-                    {
-                        struct station_config wifi_config{};
-                        strcpy((char*)wifi_config.ssid,WIFI_SSID);
-                        strcpy((char*)wifi_config.password,WIFI_USER_PASSWORD);
-                        wifi_station_set_config(&wifi_config);
-
-                        wifi_station_set_wpa2_enterprise_auth(true);
-
-                        wifi_station_clear_cert_key();
-                        wifi_station_clear_enterprise_ca_cert();
-                        wifi_station_clear_enterprise_identity();
-                        wifi_station_clear_enterprise_username();
-                        wifi_station_clear_enterprise_password();
-                        wifi_station_clear_enterprise_new_password();
-
-                        wifi_station_set_enterprise_identity((uint8*)WIFI_IDENTITY, strlen(WIFI_IDENTITY));
-                        wifi_station_set_enterprise_username((uint8*)WIFI_USER_NAME, strlen(WIFI_USER_NAME));
-                        wifi_station_set_enterprise_password((uint8*)WIFI_USER_PASSWORD, strlen((char*)WIFI_USER_PASSWORD));
-
-                        wifi_station_connect();
-
-                    }
-                    else
-                    {
-                        wifi_station_set_wpa2_enterprise_auth(false);
-                        WiFi.begin(wifis[wifiSelection],wifisPasswords[wifiSelection]);
-                    }
-                #else
-                    WiFi.begin(wifis[wifiSelection],wifisPasswords[wifiSelection]);
-                #endif
-                msConnect = millis();
-                wifiSelection++;
-                if(wifiSelection == WIFI_COUNT)
-                    wifiSelection = SELECTION_START;
-                #if USE_SERIAL || USE_DISPLAY
-                    _print('?');
-                #endif
+                _print("Scanning...");
             }
-            #if USE_SERIAL || USE_DISPLAY
-                else
+            else if(scanFinished)
+            {
+                if(millis() - msConnect > CONNECTION_RETRY_INTERVAL)
                 {
-                    _print('!');
+                    char ssid[WIFI_SSID_MAX + 1];
+                    char password[WIFI_PASSWORD_MAX + 1];
+                    if(f1 != 0 && ++wifi < f1)
+                    {
+                        strncpy_P(ssid, (char*) pgm_read_dword(&(WIFI_SSIDS[found1[wifi]])), WIFI_SSID_MAX + 1);
+                        strncpy_P(password, (char*) pgm_read_dword(&(WIFI_PASSWORDS[found1[wifi]])), WIFI_PASSWORD_MAX + 1);
+                        WiFi.begin(ssid,password);
+                        #if USE_SERIAL || USE_DISPLAY
+                            _print(ssid);
+                            _print('!');
+                        #endif
+                        msConnect = millis();
+                    }
+                    else if(f2 != 0 && ++peap < f2)
+                    {
+
+                    }
+                    /*struct station_config config;
+                    memset(&config,0,sizeof(config));
+                    #if USE_PEAP
+                        if(wifi == SELECTION_START)
+                        {
+                            wifi_station_set_wpa2_enterprise_auth(true);
+
+                            wifi_station_clear_cert_key();
+                            wifi_station_clear_enterprise_ca_cert();
+                            wifi_station_clear_enterprise_identity();
+                            wifi_station_clear_enterprise_username();
+                            wifi_station_clear_enterprise_password();
+                            wifi_station_clear_enterprise_new_password();
+
+                            strcpy((char*)config.ssid,WIFI_SSID);
+                            strcpy((char*)config.password,WIFI_USER_PASSWORD);
+
+                            wifi_station_set_enterprise_identity((uint8*)WIFI_IDENTITY, strlen(WIFI_IDENTITY));
+                            wifi_station_set_enterprise_username((uint8*)WIFI_USER_NAME, strlen(WIFI_USER_NAME));
+                            wifi_station_set_enterprise_password((uint8*)WIFI_USER_PASSWORD, strlen((char*)WIFI_USER_PASSWORD));
+
+                            wifi_station_connect();
+
+                        }
+                        else
+                        {
+                            wifi_station_set_wpa2_enterprise_auth(false);
+                            strcpy((char*)config.ssid,wifis[wifi]);
+                            strcpy((char*)config.password,wifisPasswords[wifi]);
+                        }
+                    #else
+                        strcpy((char*)config.ssid,wifis[wifi]);
+                        strcpy((char*)config.password,wifisPasswords[wifi]);
+                    #endif
+                    wifi_station_set_config(&config);
+                    msConnect = millis();
+                    wifi++;
+                    if(wifi == WIFI_COUNT)
+                        wifi = SELECTION_START;*/
                 }
-            #endif
+            }
+            else
+            {
+                WiFi.disconnect(false);
+                wifi = -1;
+                #if USE_PEAP
+                    peap = -1;
+                #endif
+                scanFinished = false;
+                scanning = true;
+                WiFi.scanNetworksAsync(&scanResult, true);
+            }
+            /*#if USE_SERIAL || USE_DISPLAY
+                _print("! ");
+                _print(WiFi.status());
+            #endif*/
         }
     #endif
 
@@ -370,6 +409,76 @@ void loop()
         _show();
     #endif
 }
+
+#if USE_WIFI
+    void scanResult(int foundCount)
+    {
+        int i1,i2;
+        const char* name;
+        char * buffer1[WIFI_COUNT];
+        memset(found1,0,sizeof(int) * WIFI_COUNT);
+        f1 = 0;
+        for(i1 = 0; i1 < WIFI_COUNT; i1++)
+        {
+            buffer1[i1] = (char*)malloc(WIFI_SSID_MAX + 1);
+            strncpy_P(buffer1[i1],(char*) pgm_read_dword(&(WIFI_SSIDS[i1])),WIFI_SSID_MAX + 1);
+        }
+        #if USE_PEAP
+            char * buffer2[PEAP_COUNT];
+            memset(found2,0,sizeof(int) * PEAP_COUNT);
+            f2 = 0;
+            for(i2 = 0; i2 < PEAP_COUNT; i2++)
+            {
+                buffer2[i2] = (char*)malloc(WIFI_SSID_MAX + 1);
+                strncpy_P(buffer2[i2],(char*) pgm_read_dword(&(PEAP_SSIDS[i2])),WIFI_SSID_MAX + 1);
+            }
+        #endif
+        for(i1 = 0; i1 < foundCount; i1++)
+        {
+            name = WiFi.SSID(i1).c_str();
+            for(i2 = 0; i2 < WIFI_COUNT; i2++)
+            {
+                if(buffer1[i2] != nullptr)
+                {
+                    if(strcmp(name,buffer1[i2]) == 0)
+                    {
+                        buffer1[i1] = nullptr;
+                        found1[f1] = i2;
+                        f1++;
+                        break;
+                    }
+                }
+            }
+            #if USE_PEAP
+                for(i2 = 0; i2 < PEAP_COUNT; i2++)
+                {
+                    if(buffer2[i2] != nullptr)
+                    {
+                        if(strcmp(name,buffer2[i2]) == 0)
+                        {
+                            buffer2[i1] = nullptr;
+                            found2[f2] = i2;
+                            f2++;
+                            break;
+                        }
+                    }
+                }
+            #endif
+        }
+        scanning = false;
+        scanFinished = true;
+        for(i1 = 0; i1 < WIFI_COUNT; i1++)
+        {
+            free(buffer1[i1]);
+        }
+        #if USE_PEAP
+            for(i2 = 0; i2 < PEAP_COUNT; i2++)
+            {
+                free(buffer2[i2]);
+            }
+        #endif
+    }
+#endif
 
 #if USE_SERIAL || USE_DISPLAY
 
