@@ -149,8 +149,8 @@
 
 #if USE_WIFI
 
-    #define WIFI_SSID_MAX    32
-    #define WIFI_PASSWORD_MAX    64
+    #define WIFI_SSID_MAX       32
+    #define WIFI_PASSWORD_MAX   64
 
     const char WIFI00_SSID[] PROGMEM =      WIFI0_SSID;
     const char WIFI01_SSID[] PROGMEM =      WIFI1_SSID;
@@ -165,6 +165,11 @@
     const char* const WIFI_PASSWORDS[] PROGMEM =    {WIFI00_PASSWORD,WIFI01_PASSWORD,WIFI02_PASSWORD};
 
     #if USE_PEAP
+
+        #define PEAP_SSID_MAX       WIFI_SSID_MAX
+        #define PEAP_IDENTITY_MAX   PEAP_SSID_MAX
+        #define PEAP_USERNAME_MAX   PEAP_IDENTITY_MAX
+        #define PEAP_PASSWORD_MAX   WIFI_PASSWORD_MAX
 
         const char PEAP00_SSID[] PROGMEM =      PEAP0_SSID;
         const char PEAP01_SSID[] PROGMEM =      PEAP1_SSID;

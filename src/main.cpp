@@ -178,7 +178,13 @@ void setup(void)
         buzzer(BUZZER_OFF);
         buzzerSetup();
     #endif
-    if (!scd30.begin())
+    if (scd30.begin())
+    {
+        #if USE_SERIAL
+            printfSerial("Calibration value: %u",scd30.getForcedCalibrationReference());
+        #endif
+    }
+    else
     {
         #if USE_SERIAL || USE_DISPLAY
             _println("Failed to find SCD30 chip.");
@@ -242,18 +248,51 @@ void loop()
         {
             if(scanning)
             {
-                _print("Scanning...");
+                #if USE_PEAP
+                    if(f1 == -1 && f2 == -1)
+                #else
+                    if(f1 == -1)
+                #endif
+                {
+                    _print("Scanning...");
+                }
+                #if USE_PEAP
+                    else if(f1 == 0 && f2 == 0)
+                #else
+                    if(f1 == 0)
+                #endif
+                {
+                    _print("No wifi available");
+                }
+                else
+                {
+                    int count;
+                    #if USE_PEAP
+                         count = f1 + f2;
+                    #else
+                        count = f1;
+                    #endif
+                    _print(count);
+                    _print(" network");
+                    if(count > 1)
+                        _print("s");
+                    _print(" found");
+                }
+
             }
             else if(scanFinished)
             {
                 if(millis() - msConnect > CONNECTION_RETRY_INTERVAL)
                 {
-                    char ssid[WIFI_SSID_MAX + 1];
-                    char password[WIFI_PASSWORD_MAX + 1];
                     if(f1 != 0 && ++wifi < f1)
                     {
+                        char ssid[PEAP_SSID_MAX + 1];
+                        char password[PEAP_PASSWORD_MAX + 1];
                         strncpy_P(ssid, (char*) pgm_read_dword(&(WIFI_SSIDS[found1[wifi]])), WIFI_SSID_MAX + 1);
                         strncpy_P(password, (char*) pgm_read_dword(&(WIFI_PASSWORDS[found1[wifi]])), WIFI_PASSWORD_MAX + 1);
+                        #if USE_PEAP
+                            wifi_station_set_wpa2_enterprise_auth(0);
+                        #endif
                         WiFi.begin(ssid,password);
                         #if USE_SERIAL || USE_DISPLAY
                             _print(ssid);
@@ -261,10 +300,46 @@ void loop()
                         #endif
                         msConnect = millis();
                     }
-                    else if(f2 != 0 && ++peap < f2)
-                    {
-
-                    }
+                    #if USE_PEAP
+                        else if(f2 != 0 && ++peap < f2)
+                        {
+                            struct station_config config;
+                            #if USE_SERIAL || USE_DISPLAY
+                                char ssid[PEAP_SSID_MAX + 1];
+                                strncpy_P(ssid,(char*) pgm_read_dword(&(PEAP_SSIDS[found2[peap]])),PEAP_SSID_MAX + 1);
+                                strncpy((char*)config.ssid,ssid,PEAP_SSID_MAX);
+                            #else
+                                strncpy_P((char*)config.ssid,(char*) pgm_read_dword(&(PEAP_SSIDS[found1[wifi]])),PEAP_SSID_MAX);
+                            #endif
+                            char identity[PEAP_IDENTITY_MAX + 1];
+                            char username[PEAP_USERNAME_MAX + 1];
+                            char password[PEAP_PASSWORD_MAX + 1];
+                            strncpy_P(password, (char*) pgm_read_dword(&(PEAP_PASSWORDS[found2[peap]])), PEAP_PASSWORD_MAX + 1);
+                            strncpy((char*)config.ssid,ssid,PEAP_SSID_MAX);
+                            strncpy((char*)config.password,password,PEAP_PASSWORD_MAX);
+                            wifi_station_set_config(&config);
+                            wifi_station_set_wpa2_enterprise_auth(1);
+                            wifi_station_clear_cert_key();
+                            wifi_station_clear_enterprise_ca_cert();
+                            wifi_station_clear_enterprise_identity();
+                            wifi_station_clear_enterprise_username();
+                            wifi_station_clear_enterprise_password();
+                            wifi_station_clear_enterprise_new_password();
+                            strncpy_P(identity, (char*) pgm_read_dword(&(PEAP_IDENTITIES[found2[peap]])), PEAP_IDENTITY_MAX + 1);
+                            strncpy_P(username, (char*) pgm_read_dword(&(PEAP_USERNAMES[found2[peap]])), PEAP_USERNAME_MAX + 1);
+                            wifi_station_set_enterprise_identity((uint8*)identity, (int)strlen(identity));
+                            wifi_station_set_enterprise_username((uint8*)username, (int)strlen(username));
+                            wifi_station_set_enterprise_password((uint8*)password, (int)strlen(password));
+                            wifi_station_connect();
+                            #if USE_SERIAL || USE_DISPLAY
+                                _print(ssid);
+                                _print('!');
+                            #endif
+                            msConnect = millis();
+                        }
+                    #endif
+                    else
+                        scanFinished = false;
                     /*struct station_config config;
                     memset(&config,0,sizeof(config));
                     #if USE_PEAP
@@ -414,7 +489,7 @@ void loop()
     void scanResult(int foundCount)
     {
         int i1,i2;
-        const char* name;
+        char name[WIFI_SSID_MAX + 1];
         char * buffer1[WIFI_COUNT];
         memset(found1,0,sizeof(int) * WIFI_COUNT);
         f1 = 0;
@@ -435,14 +510,14 @@ void loop()
         #endif
         for(i1 = 0; i1 < foundCount; i1++)
         {
-            name = WiFi.SSID(i1).c_str();
+            strncpy(name,WiFi.SSID(i1).c_str(),WIFI_SSID_MAX + 1);
             for(i2 = 0; i2 < WIFI_COUNT; i2++)
             {
                 if(buffer1[i2] != nullptr)
                 {
                     if(strcmp(name,buffer1[i2]) == 0)
                     {
-                        buffer1[i1] = nullptr;
+                        buffer1[i2] = nullptr;
                         found1[f1] = i2;
                         f1++;
                         break;
@@ -456,7 +531,7 @@ void loop()
                     {
                         if(strcmp(name,buffer2[i2]) == 0)
                         {
-                            buffer2[i1] = nullptr;
+                            buffer2[i2] = nullptr;
                             found2[f2] = i2;
                             f2++;
                             break;
