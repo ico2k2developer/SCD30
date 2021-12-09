@@ -208,12 +208,20 @@
 #endif
 
 #if USE_SERIAL || USE_DISPLAY
-void rtlprintf(const char* format, ...);
-void rtlprint(const char* string);
-void rtlprintln(const char* string);
+    void rtlprintf(const char* format, ...);
+    void rtlprint(const char* string);
+    void rtlprintln(const char* string);
 #endif
+
 #if USE_WIFI
-void scanResult(int foundCount);
+    void scanResult(int foundCount);
+    #if USE_TELNET
+        void Tloop();
+    #endif
+    #if USE_MQTT && USE_CALIBRATION
+        void calibrationValueReceived(uint32_t value);
+        void calibrationConfirmReceived(uint32_t yesOrNo);
+    #endif
 #endif
 
 #endif //SCD30_MAIN_H

@@ -6,6 +6,8 @@
 #define USE_MQTT        ON
 #define USE_SSL         ON
 #define USE_ALARM       OFF
+#define USE_CALIBRATION ON
+#define USE_TELNET      ON
 
 #include <main.h>
 
@@ -29,8 +31,13 @@ Adafruit_SCD30  scd30;
         int found2[PEAP_COUNT];
         short peap,f2;
     #endif
+    #if USE_TELNET
+        WiFiClient Tclient;
+        WiFiServer Tserver(23);
+    #endif
     #if USE_MQTT
         unsigned long msPublish = 0;
+        bool firstConnection = true;
         #if USE_SSL
             WiFiClientSecure client;
         #else
@@ -40,9 +47,16 @@ Adafruit_SCD30  scd30;
         Adafruit_MQTT_Publish co2(&mqtt, FEED_CO2);
         Adafruit_MQTT_Publish temperature(&mqtt, FEED_TEMPERATURE);
         Adafruit_MQTT_Publish humidity(&mqtt, FEED_HUMIDITY);
+        Adafruit_MQTT_Publish logs(&mqtt, FEED_LOG);
+        #if USE_CALIBRATION
+            uint16_t calibration = 0;
+            //Adafruit_MQTT_Subscribe calibrationValue(&mqtt,FEED_CALIBRATION_VALUE);
+            //Adafruit_MQTT_Subscribe calibrationConfirm(&mqtt,FEED_CALIBRATION_CONFIRM);
+        #endif
     #endif
 #endif
 char first = -2;
+bool done = true;
 
 
 void setup(void)
@@ -77,44 +91,39 @@ void setup(void)
 
     #if USE_WIFI
         WiFi.mode(WIFI_STA);
-        /*
-        uint8 attempts;
-        for(attempts = 0; attempts < CONNECTION_RETRY_COUNT; attempts++)
-        {
-            delay(CONNECTION_RETRY_INTERVAL);
-            if(WiFi.isConnected())
-                break;
-            else
-            {
-                WiFi.reconnect();
-                #if USE_SERIAL || USE_DISPLAY
-                    if(attempts == 0)
-                        _printf("Connecting to %s\n", WIFI_SSID);
-                    _printf("Attempt %i of %i...\n",attempts + 1,CONNECTION_RETRY_COUNT);
-                    _show();
-                #endif
-            }
-        }
-        if(!WiFi.isConnected())
-        {
-            #if USE_SERIAL || USE_DISPLAY
-                _print("Connection failed.");
-                _show();
-            #endif
-            //_restart();
-        }
-        */
-
+        #if USE_TELNET
+            Tserver.begin();
+        #endif
+        #if USE_MQTT && USE_CALIBRATION
+            //mqtt.subscribe(&calibrationValue);
+            //mqtt.subscribe(&calibrationConfirm);
+            //calibrationValue.setCallback(&calibrationValueReceived);
+            //calibrationConfirm.setCallback(&calibrationConfirmReceived);
+        #endif
         #if USE_OTA
-            #if USE_SERIAL || USE_DISPLAY
+            #if USE_SERIAL || USE_DISPLAY || USE_MQTT
                 ArduinoOTA.onStart([]()
                 {
-                    _clear();
-                    _printf("OTA update utility\n\nCurrent version: %s\n",VERSION);
-                    _setCursorY(_cursorY() + 1);
-                    oled.drawRect(_cursorX(),_cursorY(),SCREEN_WIDTH,10,SSD1306_WHITE);
-                    _show();
+                    #if USE_SERIAL || USE_DISPLAY
+                        _clear();
+                        _printf("OTA update incoming\n\nCurrent version: %s\n",VERSION);
+                        _setCursorY(_cursorY() + 1);
+                        oled.drawRect(_cursorX(),_cursorY(),SCREEN_WIDTH,10,SSD1306_WHITE);
+                        _show();
+                    #endif
+                    #if USE_MQTT
+                        if(mqtt.connected())
+                        {
+                            #define LENGTH_LOGS_OTA 64
+                            char * log = (char*)malloc(LENGTH_LOGS_OTA);
+                            snprintf(log,LENGTH_LOGS_OTA,"OTA update incoming, current version is %s",VERSION);
+                            logs.publish(log);
+                            free(log);
+                        }
+                    #endif
                 });
+            #endif
+            #if USE_SERIAL || USE_DISPLAY
                 ArduinoOTA.onEnd([]()
                 {
                     _print("\n\nOTA update ended");
@@ -208,6 +217,9 @@ void loop()
             #if USE_OTA
                 ArduinoOTA.handle();
             #endif
+            #if USE_TELNET
+                Tloop();
+            #endif
             #if USE_MQTT
                 #if USE_SERIAL || USE_DISPLAY
                     _print(" MQTT");
@@ -224,14 +236,24 @@ void loop()
                             co2.publish(scd30.CO2,0);
                             ledBuiltin(LED_OFF);
                         }
+                        if(firstConnection)
+                        {
+                            firstConnection = false;
+                            #define LENGTH_LOGS_CONNECTION (50 + WIFI_SSID_MAX)
+                            char * log = (char*)malloc(LENGTH_LOGS_CONNECTION);
+                            snprintf(log,LENGTH_LOGS_CONNECTION,"Connection established through network %s",WiFi.SSID().c_str());
+                            logs.publish(log);
+                            free(log);
+                        }
                         msPublish = millis();
                     }
                     #if USE_DISPLAY
-                        oled.drawFastHLine(0,SCREEN_HEIGHT - 1,(millis() - msPublish) * SCREEN_WIDTH / REFRESH_FEED,SSD1306_WHITE);
+                        oled.drawFastHLine(0,SCREEN_HEIGHT - 1,(int16_t)((millis() - msPublish) * SCREEN_WIDTH / REFRESH_FEED),SSD1306_WHITE);
                     #endif
                 }
                 else
                 {
+                    firstConnection = true;
                     #if USE_SERIAL || USE_DISPLAY
                         _println('!');
                         _print(mqtt.connectErrorString(mqtt.connect()));
@@ -340,45 +362,6 @@ void loop()
                     #endif
                     else
                         scanFinished = false;
-                    /*struct station_config config;
-                    memset(&config,0,sizeof(config));
-                    #if USE_PEAP
-                        if(wifi == SELECTION_START)
-                        {
-                            wifi_station_set_wpa2_enterprise_auth(true);
-
-                            wifi_station_clear_cert_key();
-                            wifi_station_clear_enterprise_ca_cert();
-                            wifi_station_clear_enterprise_identity();
-                            wifi_station_clear_enterprise_username();
-                            wifi_station_clear_enterprise_password();
-                            wifi_station_clear_enterprise_new_password();
-
-                            strcpy((char*)config.ssid,WIFI_SSID);
-                            strcpy((char*)config.password,WIFI_USER_PASSWORD);
-
-                            wifi_station_set_enterprise_identity((uint8*)WIFI_IDENTITY, strlen(WIFI_IDENTITY));
-                            wifi_station_set_enterprise_username((uint8*)WIFI_USER_NAME, strlen(WIFI_USER_NAME));
-                            wifi_station_set_enterprise_password((uint8*)WIFI_USER_PASSWORD, strlen((char*)WIFI_USER_PASSWORD));
-
-                            wifi_station_connect();
-
-                        }
-                        else
-                        {
-                            wifi_station_set_wpa2_enterprise_auth(false);
-                            strcpy((char*)config.ssid,wifis[wifi]);
-                            strcpy((char*)config.password,wifisPasswords[wifi]);
-                        }
-                    #else
-                        strcpy((char*)config.ssid,wifis[wifi]);
-                        strcpy((char*)config.password,wifisPasswords[wifi]);
-                    #endif
-                    wifi_station_set_config(&config);
-                    msConnect = millis();
-                    wifi++;
-                    if(wifi == WIFI_COUNT)
-                        wifi = SELECTION_START;*/
                 }
             }
             else
@@ -392,10 +375,6 @@ void loop()
                 scanning = true;
                 WiFi.scanNetworksAsync(&scanResult, true);
             }
-            /*#if USE_SERIAL || USE_DISPLAY
-                _print("! ");
-                _print(WiFi.status());
-            #endif*/
         }
     #endif
 
@@ -404,12 +383,21 @@ void loop()
         {
             if (scd30.read())
             {
+                if(!done)
+                {
+                    scd30.selfCalibrationEnabled(false);
+
+                    #define LENGTH_LOGS_SELF 32
+                    char * log = (char*)malloc(LENGTH_LOGS_SELF);
+                    snprintf(log,LENGTH_LOGS_SELF,"Self calibration is %s",scd30.selfCalibrationEnabled() ? "on" : "off");
+                    logs.publish(log);
+                    free(log);
+
+                    calibrationConfirmReceived(1);
+                    done = true;
+                }
                 if(first != 1)
                     first++;
-            }
-            else
-            {
-                scd30.reset();
             }
         }
     #endif
@@ -486,6 +474,121 @@ void loop()
 }
 
 #if USE_WIFI
+
+    #if USE_TELNET
+        void Tloop()
+        {
+            static bool alreadyConnected;
+            if(Tclient)
+            {
+        //Serial.println("Tclient");
+                if(Tclient.connected())
+                {
+                    if(!alreadyConnected)
+                    {
+                        Tclient.flush();
+                        Serial.println("We have a new client");
+                        Tclient.println("Hello, client!");
+                        alreadyConnected = true;
+                    }
+
+        //Serial.println("connected");
+                    if(Tclient.available() > 0)
+                    {
+        //Serial.println("available");
+                        while(Tclient.available())
+                        {
+                            // Read incoming message
+                            String string = Tclient.readStringUntil('\n');
+                            string.remove(string.length() - 1);
+                            if(string.operator==("quit"))
+                            {
+                                Tclient.stop();
+                            }
+                            else if(string.operator==("restart"))
+                            {
+                                _restart();
+                            }
+                            else if(string.operator==("calibration"))
+                            {
+                                Tclient.printf("Current calibration value is %i, current C02 value is %f\r\n",
+                                               scd30.getForcedCalibrationReference(),scd30.CO2);
+                                Tclient.print("Calibration value: ");
+                                String value = Tclient.readStringUntil('\n');
+                                value.remove(value.length() - 1,1);
+                                bool digit = true;
+                                unsigned int i;
+                                for(i = 0; i < value.length(); i++)
+                                {
+                                    if(!isdigit(value[i]))
+                                    {
+                                        digit = false;
+                                        break;
+                                    }
+                                }
+                                if(digit)
+                                {
+                                    calibrationValueReceived(value.toInt());
+                                    Tclient.print("Calibration confirm (type CONFIRM): ");
+                                    value = Tclient.readStringUntil('\n');
+                                    value.remove(value.length() - 1,1);
+                                    if(value.operator==("CONFIRM"))
+                                    {
+                                        done = false;
+                                        Tclient.printf("Forcing calibration with reference value %i ppm, CO2 now is %f\r\n",
+                                                      calibration,scd30.CO2);
+                                    }
+                                }
+                                else
+                                {
+                                    Tclient.println("Invalid value");
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    Tclient.stop();
+                    Serial.println("Client Disconnected");
+                }
+            }
+            else
+            {
+                if(alreadyConnected)
+                {
+                    Serial.println("Client Disconnected");
+                    alreadyConnected = false;
+                }
+                if(Tclient = Tserver.available())
+                {
+                    Serial.println("Connected to client");
+                    alreadyConnected = false;
+                }
+            }
+        }
+    #endif
+
+    #if USE_MQTT && USE_CALIBRATION
+    void calibrationValueReceived(uint32_t value)
+    {
+        calibration = (uint16_t)value;
+    }
+
+    void calibrationConfirmReceived(uint32_t yesOrNo)
+    {
+        if(yesOrNo == 1 && calibration != 0)
+        {
+            #define LENGTH_LOGS_CALIBRATION 80
+            char * log = (char*)malloc(LENGTH_LOGS_CALIBRATION);
+            snprintf(log,LENGTH_LOGS_CALIBRATION,"Forced calibration with reference value %u ppm, CO2 now is %f",calibration,scd30.CO2);
+            scd30.forceRecalibrationWithReference(calibration);
+            logs.publish(log);
+            free(log);
+        }
+    }
+    #endif
+
     void scanResult(int foundCount)
     {
         int i1,i2;
