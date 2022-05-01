@@ -38,6 +38,10 @@
         #include <Adafruit_MQTT_Client.h>
     #endif
 
+    #if USE_MODBUS
+        #include <modbus.h>
+    #endif
+
 #endif
 
 #if USE_SERIAL
@@ -124,7 +128,7 @@
 #define TEXT_PEAP           "PEAP"
 #define TEXT_ON             "ON"
 #define TEXT_OFF            "OFF"
-#define VERSION             "2.0"
+#define VERSION             "3.0"
 #define VERSION_NAME        "v" VERSION
 
 #define BUZZER              LED_BUILTIN_AUX

@@ -1,13 +1,14 @@
 #define USE_SERIAL      OFF
 #define USE_DISPLAY     ON
 #define USE_WIFI        ON
-#define USE_PEAP        ON
+#define USE_PEAP        OFF
 #define USE_OTA         ON
 #define USE_MQTT        ON
+#define USE_MODBUS      ON
 #define USE_SSL         ON
 #define USE_ALARM       OFF
-#define USE_CALIBRATION ON
-#define USE_TELNET      ON
+/*#define USE_CALIBRATION ON
+#define USE_TELNET      ON*/
 
 #include <main.h>
 
@@ -35,6 +36,10 @@ Adafruit_SCD30  scd30;
         WiFiClient Tclient;
         WiFiServer Tserver(23);
     #endif
+    #if USE_MODBUS
+        uint16_t WriteHreg[4] = {0};
+        uint16_t ReadHreg[4] = {0};
+    #endif
     #if USE_MQTT
         unsigned long msPublish = 0;
         bool firstConnection = true;
@@ -57,7 +62,6 @@ Adafruit_SCD30  scd30;
 #endif
 char first = -2;
 bool done = true;
-
 
 void setup(void)
 {
@@ -179,6 +183,12 @@ void setup(void)
         #if USE_SSL
             client.setFingerprint(AIO_FINGERPRINT);
         #endif
+        #if USE_MODBUS
+            ModbusTaskSetup();
+
+            ModbusSetWHreg(WriteHreg, 4, 4);
+            ModbusSetRHreg(ReadHreg, 0, 4);
+        #endif
     #endif
 
     ledBuiltin(LED_OFF);
@@ -265,6 +275,7 @@ void loop()
             #if USE_SERIAL || USE_DISPLAY
                 _rtlprintf("%i.%i",WiFi.localIP()[2],WiFi.localIP()[3]);
             #endif
+
         }
         else
         {
@@ -308,8 +319,8 @@ void loop()
                 {
                     if(f1 != 0 && ++wifi < f1)
                     {
-                        char ssid[PEAP_SSID_MAX + 1];
-                        char password[PEAP_PASSWORD_MAX + 1];
+                        char ssid[WIFI_SSID_MAX + 1];
+                        char password[WIFI_PASSWORD_MAX + 1];
                         strncpy_P(ssid, (char*) pgm_read_dword(&(WIFI_SSIDS[found1[wifi]])), WIFI_SSID_MAX + 1);
                         strncpy_P(password, (char*) pgm_read_dword(&(WIFI_PASSWORDS[found1[wifi]])), WIFI_PASSWORD_MAX + 1);
                         #if USE_PEAP
@@ -376,6 +387,12 @@ void loop()
                 WiFi.scanNetworksAsync(&scanResult, true);
             }
         }
+        #if USE_MODBUS
+            ModbusTaskLoop();
+            static int16_t a;
+            if(a > 100) a = 0;
+            WriteHreg[3] = a++;
+        #endif
     #endif
 
     #if USE_SERIAL || USE_DISPLAY || USE_ALARM || (USE_WIFI && USE_MQTT)
@@ -393,7 +410,7 @@ void loop()
                     logs.publish(log);
                     free(log);
 
-                    calibrationConfirmReceived(1);
+                    //calibrationConfirmReceived(1);
                     done = true;
                 }
                 if(first != 1)
@@ -401,6 +418,7 @@ void loop()
             }
         }
     #endif
+    Serial.printf()
 
     #if USE_SERIAL || USE_DISPLAY || USE_ALARM
         #if USE_SERIAL || USE_DISPLAY
@@ -417,10 +435,17 @@ void loop()
                 {
                     _printf("Temperature: %.1f%c C\n",scd30.temperature,CHAR_DEGREE);
                     _setCursor(_cursorX(), _cursorY() + 3);
+                    #if USE_WIFI && USE_MODBUS
+                        WriteHreg[1] = (uint16_t)(scd30.temperature * 10);
+                    #endif
                 }
                 if(scd30.relative_humidity != 0)
                 {
                     _printf("Humidity: %.1f %%\n\n",scd30.relative_humidity);
+
+                    #if USE_WIFI && USE_MODBUS
+                        WriteHreg[2] = (uint16_t)(scd30.relative_humidity * 10);
+                    #endif
                 }
             #endif
             if(scd30.CO2 != 0)
@@ -450,6 +475,9 @@ void loop()
                     _setCursorX(x);
                     _print(" ppm");
                 #endif
+                #if USE_WIFI && USE_MODBUS
+                    WriteHreg[0] = (uint16_t)scd30.CO2;
+                #endif
             }
         }
         if(msAlarm != 0)
@@ -474,7 +502,172 @@ void loop()
 }
 
 #if USE_WIFI
+    #if USE_MODBUS
+        bool IsWifiConnected(void)
+        {
+            return WiFi.isConnected();
+        }
+//////////////////////////////////////////////////////////////////////////////
+        unsigned long SetTimer(unsigned long mS)
+        {
+            return (millis() + mS);
+        }
+        //////////////////////////////////////////////////////////////////////////////
+        bool IsTimerExpired(unsigned long Timer)
+        {
+            return (millis() > Timer ? true : false);
+        }
+        //----------------------------------------------------------------------------
+        void ModbusTaskSetup(void)
+        {
+            mb.client();
+            ModbusStart();
+        }
+        //----------------------------------------------------------------------------
+        void ModbusTaskLoop(void)
+        {
+            digitalWrite(LED_BUILTIN, mb.isConnected(MbServer) ? LOW : HIGH);
 
+            switch(ModbusControl.TaskState)
+            {
+                case MODBUS_START:
+                {
+                    if(IsWifiConnected())
+                    {
+                        if(mb.isConnected(MbServer))
+                        {
+                            ModbusControl.TaskState = MODBUS_CONNECTED;
+                            Serial.printf("MODBUS: Connected.\n");
+                        }
+                        else
+                        {
+                            Serial.printf("MODBUS: Connecting...\n");
+                            mb.connect(MbServer,MODBUS_PORT);           // Try to connect if no connection (connect is synchronous: returns after connection is established)
+                        }
+                    }
+                }
+                    break;
+                case MODBUS_CONNECTED:
+                {
+                    if(mb.isConnected(MbServer))
+                    {  // If still connected
+                        if(ModbusControl.prHreg && ModbusControl.nrHreg)
+                        {  // If any read to do...
+        //            Serial.printf("MODBUS: Starting read transaction\n");
+
+                            ModbusControl.Trans = mb.readHreg(MbServer, ModbusControl.OfsrHreg, ModbusControl.prHreg, ModbusControl.nrHreg);  // Initiate Read HR from Modbus Slave
+                            ModbusControl.Timer = SetTimer(MODBUS_TRANSACTION_TIME);
+                            ModbusControl.TaskState = MODBUS_READ_TRANS;
+                        }
+                        else if(ModbusControl.pwHreg && ModbusControl.nwHreg)
+                        {  // else if any write to do...
+        //            Serial.printf("MODBUS: Starting write transaction -> [%d]\n",ModbusControl.pwHreg[0]);
+
+                            ModbusControl.Trans = mb.writeHreg(MbServer, ModbusControl.OfswHreg, ModbusControl.pwHreg, ModbusControl.nwHreg);  // Initiate Write HR to Modbus Slave
+                            ModbusControl.Timer = SetTimer(MODBUS_TRANSACTION_TIME);
+                            ModbusControl.TaskState = MODBUS_WRITE_TRANS;
+                        }
+        // Send and receive
+                    }
+                    else
+                    {  // Reconnect
+                        Serial.printf("MODBUS: Connection lost. Restart connection\n");
+                        ModbusControl.TaskState = MODBUS_START;
+                    }
+                }
+                    break;
+                case MODBUS_READ_TRANS:
+                {
+                    if(mb.isTransaction(ModbusControl.Trans))
+                    { // If read still pending
+                        if(IsTimerExpired(ModbusControl.Timer))
+                        {  // If timeout occurred, restart connection
+                            Serial.printf("MODBUS: Read transaction timeout...\n");
+                            ModbusControl.TaskState = MODBUS_RESTART;
+                        }
+                    }
+                    else if(ModbusControl.pwHreg && ModbusControl.nwHreg)
+                    {  // Start pending write if any
+        //         Serial.printf("MODBUS: Starting write transaction -> [%d]\n",ModbusControl.pwHreg[0]);
+
+                        ModbusControl.Trans = mb.writeHreg(MbServer, ModbusControl.OfswHreg, ModbusControl.pwHreg, ModbusControl.nwHreg);  // Initiate Write HR to Modbus Slave
+                        ModbusControl.Timer = SetTimer(MODBUS_TRANSACTION_TIME);
+                        ModbusControl.TaskState = MODBUS_WRITE_TRANS;
+                    }
+                    else
+                    {  // Restart communication cycle
+                        ModbusControl.TaskState = MODBUS_CONNECTED;
+                    }
+                }
+                    break;
+                case MODBUS_WRITE_TRANS:
+                {
+                    if(mb.isTransaction(ModbusControl.Trans))
+                    {  // If write still pending
+                        if(IsTimerExpired(ModbusControl.Timer))
+                        { // If timeout occurred, restart connection
+                            Serial.printf("MODBUS: Write transaction timeout...\n");
+                            ModbusControl.TaskState = MODBUS_RESTART;
+                        }
+                    }
+                    else
+                    {  // Restart communication cycle
+                        ModbusControl.TaskState = MODBUS_CONNECTED;
+                    }
+                }
+                    break;
+                case MODBUS_RESTART:
+                case MODBUS_END:
+                {
+                    mb.disconnect(MbServer);
+                    mb.dropTransactions();              // Cancel all waiting transactions
+
+                    Serial.printf("MODBUS: Disconnect and %s\n",MODBUS_END == ModbusControl.TaskState ? "Go to IDLE" : "RESTART");
+
+                    ModbusControl.TaskState = MODBUS_END == ModbusControl.TaskState ? MODBUS_IDLE : MODBUS_START;
+                }
+                    break;
+                case MODBUS_IDLE:
+                {
+                }
+                    break;
+                default:
+                {
+                }
+                    break;
+            }
+            mb.task();                      // Common local Modbus task
+        }
+        //----------------------------------------------------------------------------
+        void ModbusStart(void)
+        {
+            memset((void*) &ModbusControl, 0, sizeof(ModbusControl));
+            ModbusControl.TaskState = MODBUS_START;
+            Serial.printf("ModBusStart.\n");
+        }
+        //----------------------------------------------------------------------------
+        void ModbusStop(bool fRestart)
+        {
+            ModbusControl.TaskState = fRestart ? MODBUS_RESTART : MODBUS_END;
+            Serial.printf("ModBusStop [%s].\n",fRestart ? "RESTART" : "END");
+        }
+        //----------------------------------------------------------------------------
+        void ModbusSetWHreg(uint16_t* p, uint16_t ofs, uint16_t n)
+        {
+            ModbusControl.pwHreg = p;
+            ModbusControl.nwHreg = n;
+            ModbusControl.OfswHreg = ofs;
+        }
+        //----------------------------------------------------------------------------
+        void ModbusSetRHreg(uint16_t* p, uint16_t ofs, uint16_t n)
+        {
+            ModbusControl.prHreg = p;
+            ModbusControl.nrHreg = n;
+            ModbusControl.OfsrHreg = ofs;
+        }
+        //----------------------------------------------------------------------------
+    #endif
+    /*
     #if USE_TELNET
         void Tloop()
         {
@@ -567,9 +760,9 @@ void loop()
                 }
             }
         }
-    #endif
+    #endif*/
 
-    #if USE_MQTT && USE_CALIBRATION
+    /*#if USE_MQTT && USE_CALIBRATION
     void calibrationValueReceived(uint32_t value)
     {
         calibration = (uint16_t)value;
@@ -587,7 +780,7 @@ void loop()
             free(log);
         }
     }
-    #endif
+    #endif*/
 
     void scanResult(int foundCount)
     {
@@ -699,3 +892,4 @@ void loop()
     }
 
 #endif
+//-----------------------------------------------
