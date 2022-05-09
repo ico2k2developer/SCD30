@@ -418,7 +418,6 @@ void loop()
             }
         }
     #endif
-    Serial.printf()
 
     #if USE_SERIAL || USE_DISPLAY || USE_ALARM
         #if USE_SERIAL || USE_DISPLAY
