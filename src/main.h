@@ -7,6 +7,7 @@
 
 #include <passwords.h>
 #include <feeds.h>
+#include <utilities.h>
 
 #ifndef ESP8266
     #error "Source files targetting ESP8266 in a non ESP8266 project."

@@ -44,6 +44,7 @@ Adafruit_SCD30  scd30;
     #endif
 #endif
 char first = -2;
+char highCO2 = 0;
 
 void setup(void)
 {
@@ -175,13 +176,7 @@ void setup(void)
         buzzer(BUZZER_OFF);
         buzzerSetup();
     #endif
-    if (scd30.begin())
-    {
-        #if USE_SERIAL
-            printfSerial("Calibration value: %u",scd30.getForcedCalibrationReference());
-        #endif
-    }
-    else
+    if (!scd30.begin())
     {
         #if USE_SERIAL || USE_DISPLAY
             _println("Failed to find SCD30 chip.");
@@ -219,14 +214,31 @@ void loop()
                             temperature.publish(scd30.temperature, 1);
                             humidity.publish(scd30.relative_humidity, 1);
                             co2.publish(scd30.CO2,0);
+                            if(scd30.CO2 > SENSOR_CO2_LEVEL_DANGER && !highCO2)
+                            {
+                                highCO2 = 1;
+                                char log[100];
+                                snprintf(log,sizeof(log)/sizeof(log[0]),"CO2 level has exceeded danger level of "
+                                    STRINGIFY(SENSOR_CO2_LEVEL_DANGER) " ppm and now is %.0f ppm",scd30.CO2);
+                                logs.publish(log);
+                            }
+                            else if(scd30.CO2 < SENSOR_CO2_LEVEL_DANGER && highCO2)
+                            {
+                                highCO2 = 0;
+                                char log[100];
+                                snprintf(log,sizeof(log)/sizeof(log[0]),"CO2 level has lowered below danger level of "
+                                    STRINGIFY(SENSOR_CO2_LEVEL_DANGER) " ppm and now is %.0f ppm",scd30.CO2);
+                                logs.publish(log);
+                            }
                             ledBuiltin(LED_OFF);
                         }
                         if(firstConnection)
                         {
                             firstConnection = false;
-                            #define LENGTH_LOGS_CONNECTION (50 + WIFI_SSID_MAX)
+                            #define LENGTH_LOGS_CONNECTION (100 + WIFI_SSID_MAX)
                             char log[LENGTH_LOGS_CONNECTION];
-                            snprintf(log,LENGTH_LOGS_CONNECTION,"Connection established through network %s",WiFi.SSID().c_str());
+                            snprintf(log,LENGTH_LOGS_CONNECTION,"Connection established through network %s,"
+                                " now sending updates every %.1fs",WiFi.SSID().c_str(),REFRESH_FEED / 1000.0);
                             logs.publish(log);
                         }
                         msPublish = millis();
