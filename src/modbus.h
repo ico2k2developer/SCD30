@@ -7,11 +7,6 @@
 
 #include <ModbusIP_ESP8266.h>
 
-// Libraries:
-// https://github.com/emelianov/modbus-esp8266
-// modbus-esp8266          4.0.0-RC1
-//
-
 #define     MODBUS_SERVER              192, 168, 2, 31
 #define     MODBUS_PORT                503
 

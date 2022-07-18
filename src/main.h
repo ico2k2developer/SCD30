@@ -25,10 +25,6 @@
     #define CONNECTION_SCAN_INTERVAL_MAX    1500
     #include <ESP8266WiFi.h>
 
-    #if USE_PEAP
-        #include <wpa2_enterprise.h>
-    #endif
-
     #if USE_OTA
         #include <ArduinoOTA.h>
     #endif
@@ -125,10 +121,9 @@
 #define SENSOR_ALARM_DURATION       100
 
 #define CHAR_DEGREE         (char)248
-#define TEXT_PEAP           "PEAP"
 #define TEXT_ON             "ON"
 #define TEXT_OFF            "OFF"
-#define VERSION             "3.0"
+#define VERSION             "3.1"
 #define VERSION_NAME        "v" VERSION
 
 #define BUZZER              LED_BUILTIN_AUX
@@ -168,34 +163,6 @@
     const char* const WIFI_SSIDS[] PROGMEM =        {WIFI00_SSID,WIFI01_SSID,WIFI02_SSID};
     const char* const WIFI_PASSWORDS[] PROGMEM =    {WIFI00_PASSWORD,WIFI01_PASSWORD,WIFI02_PASSWORD};
 
-    #if USE_PEAP
-
-        #define PEAP_SSID_MAX       WIFI_SSID_MAX
-        #define PEAP_IDENTITY_MAX   PEAP_SSID_MAX
-        #define PEAP_USERNAME_MAX   PEAP_IDENTITY_MAX
-        #define PEAP_PASSWORD_MAX   WIFI_PASSWORD_MAX
-
-        const char PEAP00_SSID[] PROGMEM =      PEAP0_SSID;
-        const char PEAP01_SSID[] PROGMEM =      PEAP1_SSID;
-
-        const char PEAP00_IDENTITY[] PROGMEM =  PEAP0_IDENTITY;
-        const char PEAP01_IDENTITY[] PROGMEM =  PEAP1_IDENTITY;
-
-        const char PEAP00_USERNAME[] PROGMEM =  PEAP0_USER_NAME;
-        const char PEAP01_USERNAME[] PROGMEM =  PEAP1_USER_NAME;
-
-        const char PEAP00_PASSWORD[] PROGMEM =  PEAP0_PASSWORD;
-        const char PEAP01_PASSWORD[] PROGMEM =  PEAP1_PASSWORD;
-
-        #define PEAP_COUNT                              2
-        const char* const PEAP_SSIDS[] PROGMEM =        {PEAP00_SSID,PEAP01_SSID};
-        const char* const PEAP_IDENTITIES[] PROGMEM =   {PEAP00_IDENTITY,PEAP01_IDENTITY};
-        const char* const PEAP_USERNAMES[] PROGMEM =    {PEAP00_USERNAME,PEAP01_USERNAME};
-        const char* const PEAP_PASSWORDS[] PROGMEM =    {PEAP00_PASSWORD,PEAP01_PASSWORD};
-
-
-    #endif
-
     #if USE_MQTT
 
         #define AIO_SERVER      "io.adafruit.com"
@@ -219,13 +186,6 @@
 
 #if USE_WIFI
     void scanResult(int foundCount);
-    #if USE_TELNET
-        void Tloop();
-    #endif
-    #if USE_MQTT && USE_CALIBRATION
-        void calibrationValueReceived(uint32_t value);
-        void calibrationConfirmReceived(uint32_t yesOrNo);
-    #endif
 #endif
 
 #endif //SCD30_MAIN_H

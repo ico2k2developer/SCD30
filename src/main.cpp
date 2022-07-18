@@ -1,14 +1,11 @@
 #define USE_SERIAL      OFF
 #define USE_DISPLAY     ON
 #define USE_WIFI        ON
-#define USE_PEAP        OFF
 #define USE_OTA         ON
 #define USE_MQTT        ON
 #define USE_MODBUS      ON
 #define USE_SSL         ON
 #define USE_ALARM       OFF
-/*#define USE_CALIBRATION ON
-#define USE_TELNET      ON*/
 
 #include <main.h>
 
@@ -28,17 +25,8 @@ Adafruit_SCD30  scd30;
     int found1[WIFI_COUNT];
     short wifi,f1;
     unsigned long msConnect = 0;
-    #if USE_PEAP
-        int found2[PEAP_COUNT];
-        short peap,f2;
-    #endif
-    #if USE_TELNET
-        WiFiClient Tclient;
-        WiFiServer Tserver(23);
-    #endif
     #if USE_MODBUS
         uint16_t WriteHreg[4] = {0};
-        uint16_t ReadHreg[4] = {0};
     #endif
     #if USE_MQTT
         unsigned long msPublish = 0;
@@ -53,15 +41,9 @@ Adafruit_SCD30  scd30;
         Adafruit_MQTT_Publish temperature(&mqtt, FEED_TEMPERATURE);
         Adafruit_MQTT_Publish humidity(&mqtt, FEED_HUMIDITY);
         Adafruit_MQTT_Publish logs(&mqtt, FEED_LOG);
-        #if USE_CALIBRATION
-            uint16_t calibration = 0;
-            //Adafruit_MQTT_Subscribe calibrationValue(&mqtt,FEED_CALIBRATION_VALUE);
-            //Adafruit_MQTT_Subscribe calibrationConfirm(&mqtt,FEED_CALIBRATION_CONFIRM);
-        #endif
     #endif
 #endif
 char first = -2;
-bool done = true;
 
 void setup(void)
 {
@@ -79,7 +61,7 @@ void setup(void)
     #endif
 
     #if USE_SERIAL || USE_DISPLAY
-        _printf("WiFi: %s",USE_WIFI ? USE_PEAP ? TEXT_PEAP : TEXT_ON : TEXT_OFF);
+        _printf("WiFi: %s",USE_WIFI ? TEXT_ON : TEXT_OFF);
         _rtlprint(VERSION_NAME);
         _setCursorY(_cursorY() + 1);
         _printf("\nOTA: %s\n",USE_OTA ? TEXT_ON : TEXT_OFF);
@@ -95,9 +77,6 @@ void setup(void)
 
     #if USE_WIFI
         WiFi.mode(WIFI_STA);
-        #if USE_TELNET
-            Tserver.begin();
-        #endif
         #if USE_MQTT && USE_CALIBRATION
             //mqtt.subscribe(&calibrationValue);
             //mqtt.subscribe(&calibrationConfirm);
@@ -119,7 +98,7 @@ void setup(void)
                         if(mqtt.connected())
                         {
                             #define LENGTH_LOGS_OTA 64
-                            char * log = (char*)malloc(LENGTH_LOGS_OTA);
+                            char* log = (char*)malloc(LENGTH_LOGS_OTA);
                             snprintf(log,LENGTH_LOGS_OTA,"OTA update incoming, current version is %s",VERSION);
                             logs.publish(log);
                             free(log);
@@ -187,12 +166,11 @@ void setup(void)
             ModbusTaskSetup();
 
             ModbusSetWHreg(WriteHreg, 4, 4);
-            ModbusSetRHreg(ReadHreg, 0, 4);
         #endif
     #endif
 
-    ledBuiltin(LED_OFF);
     ledBuiltinSetup();
+    ledBuiltin(LED_OFF);
     #if USE_ALARM
         buzzer(BUZZER_OFF);
         buzzerSetup();
@@ -227,16 +205,13 @@ void loop()
             #if USE_OTA
                 ArduinoOTA.handle();
             #endif
-            #if USE_TELNET
-                Tloop();
-            #endif
             #if USE_MQTT
                 #if USE_SERIAL || USE_DISPLAY
                     _print(" MQTT");
                 #endif
                 if(mqtt.connected())
                 {
-                    if(millis() - msPublish > REFRESH_FEED)
+                    if((millis() - msPublish) > REFRESH_FEED)
                     {
                         if(first == 1)
                         {
@@ -250,10 +225,9 @@ void loop()
                         {
                             firstConnection = false;
                             #define LENGTH_LOGS_CONNECTION (50 + WIFI_SSID_MAX)
-                            char * log = (char*)malloc(LENGTH_LOGS_CONNECTION);
+                            char log[LENGTH_LOGS_CONNECTION];
                             snprintf(log,LENGTH_LOGS_CONNECTION,"Connection established through network %s",WiFi.SSID().c_str());
                             logs.publish(log);
-                            free(log);
                         }
                         msPublish = millis();
                     }
@@ -281,30 +255,17 @@ void loop()
         {
             if(scanning)
             {
-                #if USE_PEAP
-                    if(f1 == -1 && f2 == -1)
-                #else
-                    if(f1 == -1)
-                #endif
+                if(f1 == -1)
                 {
                     _print("Scanning...");
                 }
-                #if USE_PEAP
-                    else if(f1 == 0 && f2 == 0)
-                #else
-                    if(f1 == 0)
-                #endif
+                else if(f1 == 0)
                 {
                     _print("No wifi available");
                 }
                 else
                 {
-                    int count;
-                    #if USE_PEAP
-                         count = f1 + f2;
-                    #else
-                        count = f1;
-                    #endif
+                    int count = f1;
                     _print(count);
                     _print(" network");
                     if(count > 1)
@@ -323,9 +284,6 @@ void loop()
                         char password[WIFI_PASSWORD_MAX + 1];
                         strncpy_P(ssid, (char*) pgm_read_dword(&(WIFI_SSIDS[found1[wifi]])), WIFI_SSID_MAX + 1);
                         strncpy_P(password, (char*) pgm_read_dword(&(WIFI_PASSWORDS[found1[wifi]])), WIFI_PASSWORD_MAX + 1);
-                        #if USE_PEAP
-                            wifi_station_set_wpa2_enterprise_auth(0);
-                        #endif
                         WiFi.begin(ssid,password);
                         #if USE_SERIAL || USE_DISPLAY
                             _print(ssid);
@@ -333,44 +291,6 @@ void loop()
                         #endif
                         msConnect = millis();
                     }
-                    #if USE_PEAP
-                        else if(f2 != 0 && ++peap < f2)
-                        {
-                            struct station_config config;
-                            #if USE_SERIAL || USE_DISPLAY
-                                char ssid[PEAP_SSID_MAX + 1];
-                                strncpy_P(ssid,(char*) pgm_read_dword(&(PEAP_SSIDS[found2[peap]])),PEAP_SSID_MAX + 1);
-                                strncpy((char*)config.ssid,ssid,PEAP_SSID_MAX);
-                            #else
-                                strncpy_P((char*)config.ssid,(char*) pgm_read_dword(&(PEAP_SSIDS[found1[wifi]])),PEAP_SSID_MAX);
-                            #endif
-                            char identity[PEAP_IDENTITY_MAX + 1];
-                            char username[PEAP_USERNAME_MAX + 1];
-                            char password[PEAP_PASSWORD_MAX + 1];
-                            strncpy_P(password, (char*) pgm_read_dword(&(PEAP_PASSWORDS[found2[peap]])), PEAP_PASSWORD_MAX + 1);
-                            strncpy((char*)config.ssid,ssid,PEAP_SSID_MAX);
-                            strncpy((char*)config.password,password,PEAP_PASSWORD_MAX);
-                            wifi_station_set_config(&config);
-                            wifi_station_set_wpa2_enterprise_auth(1);
-                            wifi_station_clear_cert_key();
-                            wifi_station_clear_enterprise_ca_cert();
-                            wifi_station_clear_enterprise_identity();
-                            wifi_station_clear_enterprise_username();
-                            wifi_station_clear_enterprise_password();
-                            wifi_station_clear_enterprise_new_password();
-                            strncpy_P(identity, (char*) pgm_read_dword(&(PEAP_IDENTITIES[found2[peap]])), PEAP_IDENTITY_MAX + 1);
-                            strncpy_P(username, (char*) pgm_read_dword(&(PEAP_USERNAMES[found2[peap]])), PEAP_USERNAME_MAX + 1);
-                            wifi_station_set_enterprise_identity((uint8*)identity, (int)strlen(identity));
-                            wifi_station_set_enterprise_username((uint8*)username, (int)strlen(username));
-                            wifi_station_set_enterprise_password((uint8*)password, (int)strlen(password));
-                            wifi_station_connect();
-                            #if USE_SERIAL || USE_DISPLAY
-                                _print(ssid);
-                                _print('!');
-                            #endif
-                            msConnect = millis();
-                        }
-                    #endif
                     else
                         scanFinished = false;
                 }
@@ -379,9 +299,6 @@ void loop()
             {
                 WiFi.disconnect(false);
                 wifi = -1;
-                #if USE_PEAP
-                    peap = -1;
-                #endif
                 scanFinished = false;
                 scanning = true;
                 WiFi.scanNetworksAsync(&scanResult, true);
@@ -400,19 +317,6 @@ void loop()
         {
             if (scd30.read())
             {
-                if(!done)
-                {
-                    scd30.selfCalibrationEnabled(false);
-
-                    #define LENGTH_LOGS_SELF 32
-                    char * log = (char*)malloc(LENGTH_LOGS_SELF);
-                    snprintf(log,LENGTH_LOGS_SELF,"Self calibration is %s",scd30.selfCalibrationEnabled() ? "on" : "off");
-                    logs.publish(log);
-                    free(log);
-
-                    //calibrationConfirmReceived(1);
-                    done = true;
-                }
                 if(first != 1)
                     first++;
             }
@@ -432,7 +336,7 @@ void loop()
             #if USE_SERIAL || USE_DISPLAY
                 if(scd30.temperature != 0)
                 {
-                    _printf("Temperature: %.1f%c C\n",scd30.temperature,CHAR_DEGREE);
+                    _printf("Temperature: %.1f%cC\n",scd30.temperature,CHAR_DEGREE);
                     _setCursor(_cursorX(), _cursorY() + 3);
                     #if USE_WIFI && USE_MODBUS
                         WriteHreg[1] = (uint16_t)(scd30.temperature * 10);
@@ -440,7 +344,7 @@ void loop()
                 }
                 if(scd30.relative_humidity != 0)
                 {
-                    _printf("Humidity: %.1f %%\n\n",scd30.relative_humidity);
+                    _printf("Humidity: %.1f%%\n\n",scd30.relative_humidity);
 
                     #if USE_WIFI && USE_MODBUS
                         WriteHreg[2] = (uint16_t)(scd30.relative_humidity * 10);
@@ -472,7 +376,7 @@ void loop()
                     else
                         _print("\n");
                     _setCursorX(x);
-                    _print(" ppm");
+                    _print("ppm");
                 #endif
                 #if USE_WIFI && USE_MODBUS
                     WriteHreg[0] = (uint16_t)scd30.CO2;
@@ -502,30 +406,30 @@ void loop()
 
 #if USE_WIFI
     #if USE_MODBUS
-        bool IsWifiConnected(void)
+        bool IsWifiConnected()
         {
             return WiFi.isConnected();
         }
-//////////////////////////////////////////////////////////////////////////////
+
         unsigned long SetTimer(unsigned long mS)
         {
             return (millis() + mS);
         }
-        //////////////////////////////////////////////////////////////////////////////
+
         bool IsTimerExpired(unsigned long Timer)
         {
-            return (millis() > Timer ? true : false);
+            return millis() > Timer;
         }
-        //----------------------------------------------------------------------------
-        void ModbusTaskSetup(void)
+
+        void ModbusTaskSetup()
         {
             mb.client();
             ModbusStart();
         }
-        //----------------------------------------------------------------------------
-        void ModbusTaskLoop(void)
+
+        void ModbusTaskLoop()
         {
-            digitalWrite(LED_BUILTIN, mb.isConnected(MbServer) ? LOW : HIGH);
+            //digitalWrite(LED_BUILTIN, mb.isConnected(MbServer) ? LOW : HIGH);
 
             switch(ModbusControl.TaskState)
             {
@@ -544,8 +448,8 @@ void loop()
                             mb.connect(MbServer,MODBUS_PORT);           // Try to connect if no connection (connect is synchronous: returns after connection is established)
                         }
                     }
-                }
                     break;
+                }
                 case MODBUS_CONNECTED:
                 {
                     if(mb.isConnected(MbServer))
@@ -573,8 +477,8 @@ void loop()
                         Serial.printf("MODBUS: Connection lost. Restart connection\n");
                         ModbusControl.TaskState = MODBUS_START;
                     }
-                }
                     break;
+                }
                 case MODBUS_READ_TRANS:
                 {
                     if(mb.isTransaction(ModbusControl.Trans))
@@ -597,8 +501,8 @@ void loop()
                     {  // Restart communication cycle
                         ModbusControl.TaskState = MODBUS_CONNECTED;
                     }
-                }
                     break;
+                }
                 case MODBUS_WRITE_TRANS:
                 {
                     if(mb.isTransaction(ModbusControl.Trans))
@@ -613,8 +517,8 @@ void loop()
                     {  // Restart communication cycle
                         ModbusControl.TaskState = MODBUS_CONNECTED;
                     }
-                }
                     break;
+                }
                 case MODBUS_RESTART:
                 case MODBUS_END:
                 {
@@ -624,162 +528,47 @@ void loop()
                     Serial.printf("MODBUS: Disconnect and %s\n",MODBUS_END == ModbusControl.TaskState ? "Go to IDLE" : "RESTART");
 
                     ModbusControl.TaskState = MODBUS_END == ModbusControl.TaskState ? MODBUS_IDLE : MODBUS_START;
-                }
                     break;
-                case MODBUS_IDLE:
+                }
+                /*case MODBUS_IDLE:
                 {
-                }
                     break;
+                }
                 default:
                 {
-                }
                     break;
+                }*/
             }
             mb.task();                      // Common local Modbus task
         }
-        //----------------------------------------------------------------------------
-        void ModbusStart(void)
+
+        void ModbusStart()
         {
-            memset((void*) &ModbusControl, 0, sizeof(ModbusControl));
+            memset(&ModbusControl, 0, sizeof(ModbusControl));
             ModbusControl.TaskState = MODBUS_START;
             Serial.printf("ModBusStart.\n");
         }
-        //----------------------------------------------------------------------------
+
         void ModbusStop(bool fRestart)
         {
             ModbusControl.TaskState = fRestart ? MODBUS_RESTART : MODBUS_END;
             Serial.printf("ModBusStop [%s].\n",fRestart ? "RESTART" : "END");
         }
-        //----------------------------------------------------------------------------
+
         void ModbusSetWHreg(uint16_t* p, uint16_t ofs, uint16_t n)
         {
             ModbusControl.pwHreg = p;
             ModbusControl.nwHreg = n;
             ModbusControl.OfswHreg = ofs;
         }
-        //----------------------------------------------------------------------------
+
         void ModbusSetRHreg(uint16_t* p, uint16_t ofs, uint16_t n)
         {
             ModbusControl.prHreg = p;
             ModbusControl.nrHreg = n;
             ModbusControl.OfsrHreg = ofs;
         }
-        //----------------------------------------------------------------------------
     #endif
-    /*
-    #if USE_TELNET
-        void Tloop()
-        {
-            static bool alreadyConnected;
-            if(Tclient)
-            {
-        //Serial.println("Tclient");
-                if(Tclient.connected())
-                {
-                    if(!alreadyConnected)
-                    {
-                        Tclient.flush();
-                        Serial.println("We have a new client");
-                        Tclient.println("Hello, client!");
-                        alreadyConnected = true;
-                    }
-
-        //Serial.println("connected");
-                    if(Tclient.available() > 0)
-                    {
-        //Serial.println("available");
-                        while(Tclient.available())
-                        {
-                            // Read incoming message
-                            String string = Tclient.readStringUntil('\n');
-                            string.remove(string.length() - 1);
-                            if(string.operator==("quit"))
-                            {
-                                Tclient.stop();
-                            }
-                            else if(string.operator==("restart"))
-                            {
-                                _restart();
-                            }
-                            else if(string.operator==("calibration"))
-                            {
-                                Tclient.printf("Current calibration value is %i, current C02 value is %f\r\n",
-                                               scd30.getForcedCalibrationReference(),scd30.CO2);
-                                Tclient.print("Calibration value: ");
-                                String value = Tclient.readStringUntil('\n');
-                                value.remove(value.length() - 1,1);
-                                bool digit = true;
-                                unsigned int i;
-                                for(i = 0; i < value.length(); i++)
-                                {
-                                    if(!isdigit(value[i]))
-                                    {
-                                        digit = false;
-                                        break;
-                                    }
-                                }
-                                if(digit)
-                                {
-                                    calibrationValueReceived(value.toInt());
-                                    Tclient.print("Calibration confirm (type CONFIRM): ");
-                                    value = Tclient.readStringUntil('\n');
-                                    value.remove(value.length() - 1,1);
-                                    if(value.operator==("CONFIRM"))
-                                    {
-                                        done = false;
-                                        Tclient.printf("Forcing calibration with reference value %i ppm, CO2 now is %f\r\n",
-                                                      calibration,scd30.CO2);
-                                    }
-                                }
-                                else
-                                {
-                                    Tclient.println("Invalid value");
-                                }
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    Tclient.stop();
-                    Serial.println("Client Disconnected");
-                }
-            }
-            else
-            {
-                if(alreadyConnected)
-                {
-                    Serial.println("Client Disconnected");
-                    alreadyConnected = false;
-                }
-                if(Tclient = Tserver.available())
-                {
-                    Serial.println("Connected to client");
-                    alreadyConnected = false;
-                }
-            }
-        }
-    #endif*/
-
-    /*#if USE_MQTT && USE_CALIBRATION
-    void calibrationValueReceived(uint32_t value)
-    {
-        calibration = (uint16_t)value;
-    }
-
-    void calibrationConfirmReceived(uint32_t yesOrNo)
-    {
-        if(yesOrNo == 1 && calibration != 0)
-        {
-            #define LENGTH_LOGS_CALIBRATION 80
-            char * log = (char*)malloc(LENGTH_LOGS_CALIBRATION);
-            snprintf(log,LENGTH_LOGS_CALIBRATION,"Forced calibration with reference value %u ppm, CO2 now is %f",calibration,scd30.CO2);
-            scd30.forceRecalibrationWithReference(calibration);
-            logs.publish(log);
-            free(log);
-        }
-    }
-    #endif*/
 
     void scanResult(int foundCount)
     {
@@ -793,16 +582,6 @@ void loop()
             buffer1[i1] = (char*)malloc(WIFI_SSID_MAX + 1);
             strncpy_P(buffer1[i1],(char*) pgm_read_dword(&(WIFI_SSIDS[i1])),WIFI_SSID_MAX + 1);
         }
-        #if USE_PEAP
-            char * buffer2[PEAP_COUNT];
-            memset(found2,0,sizeof(int) * PEAP_COUNT);
-            f2 = 0;
-            for(i2 = 0; i2 < PEAP_COUNT; i2++)
-            {
-                buffer2[i2] = (char*)malloc(WIFI_SSID_MAX + 1);
-                strncpy_P(buffer2[i2],(char*) pgm_read_dword(&(PEAP_SSIDS[i2])),WIFI_SSID_MAX + 1);
-            }
-        #endif
         for(i1 = 0; i1 < foundCount; i1++)
         {
             strncpy(name,WiFi.SSID(i1).c_str(),WIFI_SSID_MAX + 1);
@@ -819,21 +598,6 @@ void loop()
                     }
                 }
             }
-            #if USE_PEAP
-                for(i2 = 0; i2 < PEAP_COUNT; i2++)
-                {
-                    if(buffer2[i2] != nullptr)
-                    {
-                        if(strcmp(name,buffer2[i2]) == 0)
-                        {
-                            buffer2[i2] = nullptr;
-                            found2[f2] = i2;
-                            f2++;
-                            break;
-                        }
-                    }
-                }
-            #endif
         }
         scanning = false;
         scanFinished = true;
@@ -841,12 +605,6 @@ void loop()
         {
             free(buffer1[i1]);
         }
-        #if USE_PEAP
-            for(i2 = 0; i2 < PEAP_COUNT; i2++)
-            {
-                free(buffer2[i2]);
-            }
-        #endif
     }
 #endif
 
@@ -870,9 +628,8 @@ void loop()
             va_end(arg);
         }
         rtlprint(buffer);
-        if (buffer != temp) {
+        if (buffer != temp)
             delete[] buffer;
-        }
     }
 
     void rtlprint(const char* string)
