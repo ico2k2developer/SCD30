@@ -78,32 +78,20 @@ void setup(void)
 
     #if USE_WIFI
         WiFi.mode(WIFI_STA);
-        #if USE_MQTT && USE_CALIBRATION
-            //mqtt.subscribe(&calibrationValue);
-            //mqtt.subscribe(&calibrationConfirm);
-            //calibrationValue.setCallback(&calibrationValueReceived);
-            //calibrationConfirm.setCallback(&calibrationConfirmReceived);
-        #endif
         #if USE_OTA
             #if USE_SERIAL || USE_DISPLAY || USE_MQTT
                 ArduinoOTA.onStart([]()
                 {
                     #if USE_SERIAL || USE_DISPLAY
                         _clear();
-                        _printf("OTA update incoming\n\nCurrent version: %s\n",VERSION);
+                        _print("OTA update incoming\n\nCurrent version: " VERSION "\n");
                         _setCursorY(_cursorY() + 1);
                         oled.drawRect(_cursorX(),_cursorY(),SCREEN_WIDTH,10,SSD1306_WHITE);
                         _show();
                     #endif
                     #if USE_MQTT
                         if(mqtt.connected())
-                        {
-                            #define LENGTH_LOGS_OTA 64
-                            char* log = (char*)malloc(LENGTH_LOGS_OTA);
-                            snprintf(log,LENGTH_LOGS_OTA,"OTA update incoming, current version is %s",VERSION);
-                            logs.publish(log);
-                            free(log);
-                        }
+                            logs.publish("OTA update incoming, current version is " VERSION);
                     #endif
                 });
             #endif
