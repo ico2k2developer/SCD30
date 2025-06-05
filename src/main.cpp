@@ -1,11 +1,12 @@
-#define USE_SERIAL      OFF
-#define USE_DISPLAY     ON
-#define USE_WIFI        ON
-#define USE_OTA         ON
-#define USE_MQTT        ON
-#define USE_MODBUS      ON
-#define USE_SSL         ON
-#define USE_ALARM       OFF
+#define USE_SERIAL          OFF
+#define USE_DISPLAY         ON
+#define USE_DISPLAY_DELAY   ON
+#define USE_WIFI            ON
+#define USE_OTA             ON
+#define USE_MQTT            OFF
+#define USE_MODBUS          ON
+#define USE_SSL             OFF
+#define USE_ALARM           OFF
 
 #include <main.h>
 
@@ -16,6 +17,9 @@ Adafruit_SCD30  scd30;
         int16_t x,y;
         #if USE_DISPLAY
             Adafruit_SSD1306 oled;
+            #if USE_DISPLAY_DELAY
+                setupDisplayDelay();
+            #endif
         #endif
     #endif
 #endif
@@ -71,7 +75,7 @@ void setup(void)
         _setCursorY(_cursorY() + 1);
         _printf("SSL: %s\n",USE_SSL ? TEXT_ON : TEXT_OFF);
 
-        _show();
+        _forceShow();
         _clear();
         delay(2000);
     #endif
@@ -87,7 +91,7 @@ void setup(void)
                         _print("OTA update incoming\n\nCurrent version: " VERSION "\n");
                         _setCursorY(_cursorY() + 1);
                         oled.drawRect(_cursorX(),_cursorY(),SCREEN_WIDTH,10,SSD1306_WHITE);
-                        _show();
+                        _forceShow();
                     #endif
                     #if USE_MQTT
                         if(mqtt.connected())
@@ -99,13 +103,13 @@ void setup(void)
                 ArduinoOTA.onEnd([]()
                 {
                     _print("\n\nOTA update ended");
-                    _show();
+                    _forceShow();
                 });
                 #if USE_DISPLAY
                     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
                     {
                         oled.fillRect(_cursorX(), _cursorY(), progress * SCREEN_WIDTH / total, 10, SSD1306_WHITE);
-                        _show();
+                        _forceShow();
                     });
                 #endif
                 ArduinoOTA.onError([](ota_error_t error)
@@ -143,7 +147,7 @@ void setup(void)
                             _println("unknown");
                         }
                     }
-                    _show();
+                    _forceShow();
                 });
             #endif
             ArduinoOTA.begin();
@@ -168,7 +172,7 @@ void setup(void)
     {
         #if USE_SERIAL || USE_DISPLAY
             _println("Failed to find SCD30 chip.");
-            _show();
+            _forceShow();
         #endif
         _restart();
     }
