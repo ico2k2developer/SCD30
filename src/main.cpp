@@ -176,6 +176,12 @@ void setup(void)
         #endif
         _restart();
     }
+
+    /*
+    scd30.selfCalibrationEnabled(false);
+    delay(10000);
+    scd30.forceRecalibrationWithReference(430);
+    */
 }
 
 void loop()
@@ -261,11 +267,11 @@ void loop()
             {
                 if(f1 == -1)
                 {
-                    _print("Scanning...");
+                    _print("Scanning...\n");
                 }
                 else if(f1 == 0)
                 {
-                    _print("No wifi available");
+                    _print("No wifi available\n");
                 }
                 else
                 {
@@ -274,7 +280,7 @@ void loop()
                     _print(" network");
                     if(count > 1)
                         _print("s");
-                    _print(" found");
+                    _print(" found\n");
                 }
 
             }
@@ -314,7 +320,17 @@ void loop()
             if(a > 100) a = 0;
             WriteHreg[3] = a++;
         #endif
+        _setCursorY(_cursorY() + 1);
     #endif
+
+    _print("CAL: ");
+    if(scd30.selfCalibrationEnabled())
+        _print("ON, ");
+    else
+        _print("OFF, ");
+    _print(scd30.getForcedCalibrationReference());
+    _print('\n');
+    //_setCursorY(_cursorY() + 1);
 
     #if USE_SERIAL || USE_DISPLAY || USE_ALARM || (USE_WIFI && USE_MQTT)
         if(scd30.dataReady())
@@ -332,7 +348,7 @@ void loop()
             #if !USE_WIFI
                 _print(SENSOR_NAME);
             #endif
-            _print("\n\n");
+            //_print("\n\n");
             _setCursor(_cursorX(), _cursorY() + 1);
         #endif
         if(first == 1)
@@ -341,14 +357,15 @@ void loop()
                 if(scd30.temperature != 0)
                 {
                     _printf("Temperature: %.1f%cC\n",scd30.temperature,CHAR_DEGREE);
-                    _setCursor(_cursorX(), _cursorY() + 3);
+                    _setCursorY(_cursorY() + 1);
                     #if USE_WIFI && USE_MODBUS
                         WriteHreg[1] = (uint16_t)(scd30.temperature * 10);
                     #endif
                 }
                 if(scd30.relative_humidity != 0)
                 {
-                    _printf("Humidity: %.1f%%\n\n",scd30.relative_humidity);
+                    _printf("Humidity: %.1f%%\n",scd30.relative_humidity);
+                    _setCursorY(_cursorY() + 1);
 
                     #if USE_WIFI && USE_MODBUS
                         WriteHreg[2] = (uint16_t)(scd30.relative_humidity * 10);
@@ -360,6 +377,7 @@ void loop()
                 if(msAlarm == 0)
                     msAlarm = scd30.CO2 > SENSOR_CO2_LEVEL_DANGER ? millis() : 0;
                 #if USE_SERIAL || USE_DISPLAY
+                    _setCursor(_cursorX(), _cursorY() + 2);
                     _textSize(2);
                     _print("CO");
                     x = _cursorX();

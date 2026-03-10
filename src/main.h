@@ -146,7 +146,7 @@
 #define CHAR_DEGREE         (char)248
 #define TEXT_ON             "ON"
 #define TEXT_OFF            "OFF"
-#define VERSION             "3.3"
+#define VERSION             "3.4"
 #define VERSION_NAME        "v" VERSION
 
 #define BUZZER              LED_BUILTIN_AUX
